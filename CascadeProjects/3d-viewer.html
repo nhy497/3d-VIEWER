@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D 模型預覽器</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            overflow: hidden;
+        }
+        
+        #container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+        
+        #canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 5px;
+            font-size: 14px;
+            z-index: 100;
+        }
+        
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px 30px;
+            border-radius: 10px;
+            font-size: 16px;
+            z-index: 200;
+        }
+        
+        .controls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 15px 20px;
+            border-radius: 10px;
+            z-index: 100;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+        
+        .controls button {
+            padding: 8px 15px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        .controls button:hover {
+            background: #45a049;
+        }
+        
+        .controls label {
+            font-size: 14px;
+        }
+        
+        .controls input[type="range"] {
+            width: 100px;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <canvas id="canvas"></canvas>
+        <div id="info">
+            <h3>3D 模型預覽器</h3>
+            <p>使用滑鼠拖曳旋轉 | 滾輪縮放</p>
+        </div>
+        <div id="loading">正在載入 3D 模型...</div>
+        <div class="controls">
+            <button onclick="resetCamera()">重置相機</button>
+            <button onclick="toggleWireframe()">切換線框</button>
+            <label>
+                旋轉速度: 
+                <input type="range" id="rotationSpeed" min="0" max="2" step="0.1" value="0">
+            </label>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    
+    <script>
+        let scene, camera, renderer, controls, model;
+        let autoRotate = false;
+        let wireframe = false;
+        
+        function init() {
+            // 創建場景
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xf0f0f0);
+            
+            // 添加霧化效果
+            scene.fog = new THREE.Fog(0xf0f0f0, 10, 50);
+            
+            // 創建相機
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 5;
+            
+            // 創建渲染器
+            renderer = new THREE.WebGLRenderer({ 
+                canvas: document.getElementById('canvas'),
+                antialias: true 
+            });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            
+            // 創建控制器
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.screenSpacePanning = false;
+            controls.minDistance = 1;
+            controls.maxDistance = 50;
+            controls.maxPolarAngle = Math.PI;
+            
+            // 添加光照系統
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+            scene.add(ambientLight);
+            
+            // 主方向光
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
+            directionalLight.position.set(10, 10, 5);
+            directionalLight.castShadow = true;
+            directionalLight.shadow.mapSize.width = 2048;
+            directionalLight.shadow.mapSize.height = 2048;
+            directionalLight.shadow.camera.near = 0.5;
+            directionalLight.shadow.camera.far = 50;
+            scene.add(directionalLight);
+            
+            // 補光1
+            const fillLight1 = new THREE.DirectionalLight(0xffffff, 0.5);
+            fillLight1.position.set(-10, 5, -5);
+            scene.add(fillLight1);
+            
+            // 補光2
+            const fillLight2 = new THREE.DirectionalLight(0xffffff, 0.3);
+            fillLight2.position.set(5, -5, 10);
+            scene.add(fillLight2);
+            
+            // 點光源
+            const pointLight = new THREE.PointLight(0xffffff, 0.8);
+            pointLight.position.set(0, 10, 0);
+            scene.add(pointLight);
+            
+            // 添加環境貼圖
+            const pmremGenerator = new THREE.PMREMGenerator(renderer);
+            pmremGenerator.compileEquirectangularShader();
+            const envTexture = pmremGenerator.fromScene(new THREE.Scene()).texture;
+            scene.environment = envTexture;
+            
+            // 添加網格地面
+            const gridHelper = new THREE.GridHelper(20, 20, 0x444444, 0x444444);
+            scene.add(gridHelper);
+            
+            // 載入 GLB 模型
+            loadModel();
+            
+            // 監聽視窗大小變化
+            window.addEventListener('resize', onWindowResize, false);
+            
+            // 監聽旋轉速度滑塊
+            document.getElementById('rotationSpeed').addEventListener('input', function(e) {
+                autoRotate = parseFloat(e.target.value) > 0;
+                controls.autoRotateSpeed = parseFloat(e.target.value);
+                controls.autoRotate = autoRotate;
+            });
+        }
+        
+        function loadModel() {
+            const loader = new THREE.GLTFLoader();
+            
+            // 載入您的 GLB 文件
+            loader.load(
+                'model.glb',
+                function(gltf) {
+                    model = gltf.scene;
+                    
+                    // 調整模型大小和位置
+                    const box = new THREE.Box3().setFromObject(model);
+                    const center = box.getCenter(new THREE.Vector3());
+                    const size = box.getSize(new THREE.Vector3());
+                    
+                    const maxDim = Math.max(size.x, size.y, size.z);
+                    const scale = 8 / maxDim;
+                    model.scale.multiplyScalar(scale);
+                    
+                    model.position.sub(center.multiplyScalar(scale));
+                    model.position.y = 0;
+                    
+                    // 改善材質和顯示
+                    model.traverse(function(child) {
+                        if (child.isMesh) {
+                            child.castShadow = true;
+                            child.receiveShadow = true;
+                            
+                            // 確保雙面渲染
+                            if (child.material) {
+                                child.material.side = THREE.DoubleSide;
+                                child.material.needsUpdate = true;
+                                
+                                // 如果是基本材質，改善其屬性
+                                if (child.material.color) {
+                                    child.material.color.convertSRGBToLinear();
+                                }
+                                
+                                // 確保材質正確響應光照
+                                if (child.material instanceof THREE.MeshStandardMaterial) {
+                                    child.material.roughness = 0.5;
+                                    child.material.metalness = 0.1;
+                                }
+                            }
+                        }
+                    });
+                    
+                    scene.add(model);
+                    
+                    // 調整相機位置
+                    const distance = maxDim * 3;
+                    camera.position.set(distance * 0.8, distance * 0.6, distance * 0.8);
+                    camera.lookAt(0, 0, 0);
+                    
+                    // 隱藏載入訊息
+                    document.getElementById('loading').style.display = 'none';
+                    
+                    animate();
+                },
+                function(progress) {
+                    const percent = (progress.loaded / progress.total * 100).toFixed(1);
+                    document.getElementById('loading').textContent = `載入中... ${percent}%`;
+                },
+                function(error) {
+                    console.error('載入模型時發生錯誤:', error);
+                    document.getElementById('loading').textContent = '載入失敗！請檢查文件路徑。';
+                    document.getElementById('loading').style.color = '#ff6b6b';
+                }
+            );
+        }
+        
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        
+        function resetCamera() {
+            const box = new THREE.Box3().setFromObject(model);
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const distance = maxDim * 2;
+            
+            camera.position.set(distance, distance, distance);
+            camera.lookAt(0, 0, 0);
+            controls.reset();
+        }
+        
+        function toggleWireframe() {
+            if (model) {
+                wireframe = !wireframe;
+                model.traverse(function(child) {
+                    if (child.isMesh) {
+                        child.material.wireframe = wireframe;
+                    }
+                });
+            }
+        }
+        
+        // 初始化
+        init();
+    </script>
+</body>
+</html>
